@@ -108,15 +108,22 @@ export default function PowerMarketDashboard() {
   };
 
   // 导出CSV功能
+  // 页面加载时自动获取数据库状态
+  useEffect(() => {
+    if (activeTab === 'database' && !databaseStatus) {
+      fetchDatabaseStatus();
+    }
+  }, [activeTab]);
+
   const exportToCSV = (data, filename) => {
     if (!data || data.length === 0) return;
-    
+
     const headers = Object.keys(data[0]);
     const csvContent = [
       headers.join(','),
       ...data.map(row => headers.map(header => row[header]).join(','))
     ].join('\n');
-    
+
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -156,16 +163,17 @@ export default function PowerMarketDashboard() {
             <h3 style={{ fontSize: '14px', marginBottom: '10px', color: '#ecf0f1' }}>📊 预测配置</h3>
             
             <label style={{ display: 'block', fontSize: '12px', marginBottom: '5px' }}>预测日期:</label>
-            <select 
+            <input
+              type="date"
               value={predictionConfig.prediction_date}
               onChange={(e) => setPredictionConfig({...predictionConfig, prediction_date: e.target.value})}
+              min="2024-05-01"
+              max="2024-06-30"
               style={{ width: '100%', padding: '5px', marginBottom: '10px', fontSize: '12px' }}
-            >
-              <option value="2024-05-02">2024-05-02 (有验证数据)</option>
-              <option value="2024-05-03">2024-05-03</option>
-              <option value="2024-06-01">2024-06-01</option>
-              <option value="2024-06-15">2024-06-15</option>
-            </select>
+            />
+            <p style={{ fontSize: '10px', color: '#bdc3c7', margin: '0 0 10px 0' }}>
+              推荐: 2024-05-02 (有验证数据)
+            </p>
             
             <label style={{ display: 'block', fontSize: '12px', marginBottom: '5px' }}>预测数据点:</label>
             <select 
@@ -269,17 +277,14 @@ export default function PowerMarketDashboard() {
           {/* 标签页导航 */}
           <div style={{ marginBottom: '20px' }}>
             {[
-              { key: 'database', label: '🔍 数据库状态', action: fetchDatabaseStatus },
-              { key: 'historical', label: '📈 历史电价', action: fetchHistoricalData },
-              { key: 'prediction', label: '📊 预测分析', action: runPrediction },
-              { key: 'optimization', label: '🎯 投标优化', action: runOptimization }
+              { key: 'database', label: '🔍 数据库状态' },
+              { key: 'historical', label: '📈 历史电价' },
+              { key: 'prediction', label: '📊 预测分析' },
+              { key: 'optimization', label: '🎯 投标优化' }
             ].map(tab => (
               <button
                 key={tab.key}
-                onClick={() => {
-                  setActiveTab(tab.key);
-                  if (tab.action) tab.action();
-                }}
+                onClick={() => setActiveTab(tab.key)}
                 style={{
                   padding: '10px 20px',
                   marginRight: '10px',
@@ -294,6 +299,81 @@ export default function PowerMarketDashboard() {
                 {tab.label}
               </button>
             ))}
+          </div>
+
+          {/* 操作按钮区域 */}
+          <div style={{ marginBottom: '20px' }}>
+            {activeTab === 'database' && (
+              <button
+                onClick={fetchDatabaseStatus}
+                disabled={loading}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: loading ? '#95a5a6' : '#27ae60',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                {loading ? '⏳ 检查中...' : '🔍 检查数据库状态'}
+              </button>
+            )}
+
+            {activeTab === 'historical' && (
+              <button
+                onClick={fetchHistoricalData}
+                disabled={loading}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: loading ? '#95a5a6' : '#3498db',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                {loading ? '⏳ 获取中...' : '📊 获取历史数据'}
+              </button>
+            )}
+
+            {activeTab === 'prediction' && (
+              <button
+                onClick={runPrediction}
+                disabled={loading}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: loading ? '#95a5a6' : '#e74c3c',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                {loading ? '⏳ 预测中...' : '🚀 开始预测分析'}
+              </button>
+            )}
+
+            {activeTab === 'optimization' && (
+              <button
+                onClick={runOptimization}
+                disabled={loading || !predictionResults?.predictions}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: loading ? '#95a5a6' : !predictionResults?.predictions ? '#bdc3c7' : '#9b59b6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: loading || !predictionResults?.predictions ? 'not-allowed' : 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                {loading ? '⏳ 优化中...' : !predictionResults?.predictions ? '⚠️ 需要先运行预测' : '🎯 开始投标优化'}
+              </button>
+            )}
           </div>
 
           {/* 加载指示器 */}
@@ -313,6 +393,20 @@ export default function PowerMarketDashboard() {
           {!loading && (
             <>
               {/* 数据库状态页面 */}
+              {activeTab === 'database' && !databaseStatus && (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}>
+                  <div style={{ fontSize: '16px', color: '#7f8c8d', marginBottom: '20px' }}>
+                    点击"🔍 检查数据库状态"按钮开始
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'database' && databaseStatus && (
                 <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
                   <h2 style={{ marginTop: 0, color: '#2c3e50' }}>🔍 数据库状态</h2>
@@ -370,6 +464,23 @@ export default function PowerMarketDashboard() {
               )}
 
               {/* 历史电价页面 */}
+              {activeTab === 'historical' && !historicalData && (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}>
+                  <div style={{ fontSize: '16px', color: '#7f8c8d', marginBottom: '20px' }}>
+                    点击"📊 获取历史数据"按钮开始
+                  </div>
+                  <div style={{ fontSize: '14px', color: '#95a5a6' }}>
+                    可在侧边栏配置时间范围和预测对比选项
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'historical' && historicalData && (
                 <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -460,6 +571,23 @@ export default function PowerMarketDashboard() {
               )}
 
               {/* 预测分析页面 */}
+              {activeTab === 'prediction' && !predictionResults && (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}>
+                  <div style={{ fontSize: '16px', color: '#7f8c8d', marginBottom: '20px' }}>
+                    点击"🚀 开始预测分析"按钮开始
+                  </div>
+                  <div style={{ fontSize: '14px', color: '#95a5a6' }}>
+                    可在侧边栏配置预测日期、数据点数和置信度
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'prediction' && predictionResults && (
                 <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
@@ -583,6 +711,26 @@ export default function PowerMarketDashboard() {
               )}
 
               {/* 投标优化页面 */}
+              {activeTab === 'optimization' && !optimizationResults && (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px',
+                  backgroundColor: 'white',
+                  borderRadius: '8px',
+                  boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                }}>
+                  <div style={{ fontSize: '16px', color: '#7f8c8d', marginBottom: '20px' }}>
+                    {!predictionResults?.predictions
+                      ? '请先运行预测分析，然后点击"🎯 开始投标优化"'
+                      : '点击"🎯 开始投标优化"按钮开始'
+                    }
+                  </div>
+                  <div style={{ fontSize: '14px', color: '#95a5a6' }}>
+                    可在侧边栏配置发电成本、上调成本和下调成本参数
+                  </div>
+                </div>
+              )}
+
               {activeTab === 'optimization' && optimizationResults && (
                 <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)' }}>
                   <h2 style={{ marginTop: 0, color: '#2c3e50' }}>🎯 投标优化结果</h2>
