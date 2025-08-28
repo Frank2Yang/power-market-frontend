@@ -1,76 +1,97 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 
 export default function Home() {
-  const [file, setFile] = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [result, setResult] = useState(null);
+  const [databaseStatus, setDatabaseStatus] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [predictions, setPredictions] = useState(null);
   const [optimizing, setOptimizing] = useState(false);
   const [optimization, setOptimization] = useState(null);
-  const [activeTab, setActiveTab] = useState('upload');
+  const [activeTab, setActiveTab] = useState('database');
   const [sidebarConfig, setSidebarConfig] = useState({
     useRF: true,
     useXGB: true,
-    useLR: false,
-    useEnsemble: true,
+    useLR: true,
+    useGradientBoosting: true,
     predictionHours: 24,
     confidenceLevel: 0.95,
     enableOptimization: true,
-    costG: 400.0,
-    costUp: 50.0,
-    costDn: 30.0
+    autoOptimize: true,
+    costG: 380.0,
+    costUp: 500.0,
+    costDn: 300.0
   });
 
   const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://power-market-api.vercel.app';
 
-  const handleFileUpload = async (event) => {
-    const selectedFile = event.target.files[0];
-    if (!selectedFile) return;
-
-    setFile(selectedFile);
-    setUploading(true);
-    setResult(null);
-    setPredictions(null);
-    setOptimization(null);
-
-    try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-
-      const response = await axios.post(`${API_URL}/api/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
-
-      setResult(response.data);
-      alert('✅ 文件上传成功！');
-    } catch (error) {
-      console.error('Upload error:', error);
-      alert('❌ 文件上传失败：' + (error.response?.data?.error || error.message));
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const handlePredict = async () => {
-    if (!result) {
-      alert('请先上传数据文件');
+  // 下载CSV文件函数
+  const downloadCSV = (data, filename) => {
+    if (!data || data.length === 0) {
+      alert('没有数据可下载');
       return;
     }
 
+    // 转换数据为CSV格式
+    const headers = ['时间', '预测价格(元/MWh)', '置信区间下限', '置信区间上限'];
+    const csvContent = [
+      headers.join(','),
+      ...data.map(item => [
+        new Date(item.time).toLocaleString('zh-CN'),
+        item.predicted_price,
+        item.confidence_lower,
+        item.confidence_upper
+      ].join(','))
+    ].join('\n');
+
+    // 创建下载链接
+    const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const fetchDatabaseStatus = async () => {
+    setLoading(true);
+    try {
+      const response = await axios.get(`${API_URL}/api/database/status`);
+      setDatabaseStatus(response.data);
+    } catch (error) {
+      console.error('Database status error:', error);
+      alert('❌ 获取数据库状态失败：' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 页面加载时获取数据库状态
+  useEffect(() => {
+    fetchDatabaseStatus();
+  }, []);
+
+  const handlePredict = async () => {
+    if (!databaseStatus || !databaseStatus.database) {
+      alert('请先检查数据库状态');
+      return;
+    }
+
+    setLoading(true);
     try {
       const response = await axios.post(`${API_URL}/api/predict`, {
-        data: result.data,
         config: {
           prediction_hours: sidebarConfig.predictionHours,
           models: [
-            ...(sidebarConfig.useRF ? ['rf'] : []),
-            ...(sidebarConfig.useXGB ? ['xgb'] : []),
-            ...(sidebarConfig.useLR ? ['lr'] : []),
-            ...(sidebarConfig.useEnsemble ? ['ensemble'] : [])
-          ]
+            ...(sidebarConfig.useRF ? ['random_forest'] : []),
+            ...(sidebarConfig.useXGB ? ['xgboost'] : []),
+            ...(sidebarConfig.useLR ? ['linear_regression'] : []),
+            ...(sidebarConfig.useGradientBoosting ? ['gradient_boosting'] : [])
+          ],
+          confidence_level: sidebarConfig.confidenceLevel,
+          auto_optimize: sidebarConfig.autoOptimize
         }
       });
 
@@ -79,6 +100,8 @@ export default function Home() {
     } catch (error) {
       console.error('Prediction error:', error);
       alert('❌ 预测失败：' + (error.response?.data?.error || error.message));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -87,9 +110,9 @@ export default function Home() {
       alert('请先完成预测分析');
       return;
     }
-
+    
     setOptimizing(true);
-
+    
     try {
       const response = await axios.post(`${API_URL}/api/optimize`, {
         predictions: predictions.predictions,
@@ -101,7 +124,7 @@ export default function Home() {
           }
         }
       });
-
+      
       setOptimization(response.data);
       alert('✅ 投标优化完成！');
     } catch (error) {
@@ -112,24 +135,10 @@ export default function Home() {
     }
   };
 
-  const downloadCSV = (data, filename) => {
-    const csvContent = "data:text/csv;charset=utf-8," + 
-      Object.keys(data[0]).join(",") + "\n" +
-      data.map(row => Object.values(row).join(",")).join("\n");
-    
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  };
-
   return (
-    <div style={{
-      display: 'flex',
-      minHeight: '100vh',
+    <div style={{ 
+      display: 'flex', 
+      minHeight: '100vh', 
       backgroundColor: '#ffffff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif'
     }}>
@@ -141,8 +150,8 @@ export default function Home() {
         borderRight: '1px solid #e0e0e0',
         overflowY: 'auto'
       }}>
-        <h2 style={{
-          color: '#1f77b4',
+        <h2 style={{ 
+          color: '#1f77b4', 
           marginBottom: '20px',
           fontSize: '18px',
           fontWeight: 'bold'
@@ -152,21 +161,21 @@ export default function Home() {
 
         {/* 预测模型配置 */}
         <div style={{ marginBottom: '25px' }}>
-          <h3 style={{
-            fontSize: '16px',
+          <h3 style={{ 
+            fontSize: '16px', 
             marginBottom: '15px',
             color: '#262730'
           }}>预测模型</h3>
-
+          
           {[
             { key: 'useRF', label: '随机森林' },
             { key: 'useXGB', label: 'XGBoost' },
             { key: 'useLR', label: '线性回归' },
-            { key: 'useEnsemble', label: '智能集成' }
+            { key: 'useGradientBoosting', label: '梯度提升' }
           ].map(({ key, label }) => (
-            <label key={key} style={{
-              display: 'flex',
-              alignItems: 'center',
+            <label key={key} style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
               marginBottom: '8px',
               cursor: 'pointer'
             }}>
@@ -186,15 +195,15 @@ export default function Home() {
 
         {/* 预测参数 */}
         <div style={{ marginBottom: '25px' }}>
-          <h3 style={{
-            fontSize: '16px',
+          <h3 style={{ 
+            fontSize: '16px', 
             marginBottom: '15px',
             color: '#262730'
           }}>预测参数</h3>
-
+          
           <div style={{ marginBottom: '15px' }}>
-            <label style={{
-              display: 'block',
+            <label style={{ 
+              display: 'block', 
               marginBottom: '5px',
               fontSize: '14px'
             }}>
@@ -214,8 +223,8 @@ export default function Home() {
           </div>
 
           <div style={{ marginBottom: '15px' }}>
-            <label style={{
-              display: 'block',
+            <label style={{ 
+              display: 'block', 
               marginBottom: '5px',
               fontSize: '14px'
             }}>
@@ -234,19 +243,37 @@ export default function Home() {
               style={{ width: '100%' }}
             />
           </div>
+
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            marginBottom: '15px',
+            cursor: 'pointer'
+          }}>
+            <input
+              type="checkbox"
+              checked={sidebarConfig.autoOptimize}
+              onChange={(e) => setSidebarConfig(prev => ({
+                ...prev,
+                autoOptimize: e.target.checked
+              }))}
+              style={{ marginRight: '8px' }}
+            />
+            <span style={{ fontSize: '14px' }}>🤖 自动超参数优化</span>
+          </label>
         </div>
 
         {/* 投标优化 */}
         <div>
-          <h3 style={{
-            fontSize: '16px',
+          <h3 style={{ 
+            fontSize: '16px', 
             marginBottom: '15px',
             color: '#262730'
           }}>投标优化</h3>
-
-          <label style={{
-            display: 'flex',
-            alignItems: 'center',
+          
+          <label style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
             marginBottom: '15px',
             cursor: 'pointer'
           }}>
@@ -268,8 +295,8 @@ export default function Home() {
             { key: 'costDn', label: '下调成本(元/MWh)' }
           ].map(({ key, label }) => (
             <div key={key} style={{ marginBottom: '15px' }}>
-              <label style={{
-                display: 'block',
+              <label style={{ 
+                display: 'block', 
                 marginBottom: '5px',
                 fontSize: '14px'
               }}>
@@ -296,17 +323,17 @@ export default function Home() {
       </div>
 
       {/* 主内容区域 */}
-      <div style={{
-        flex: 1,
+      <div style={{ 
+        flex: 1, 
         padding: '20px',
         backgroundColor: '#ffffff'
       }}>
         {/* 标题 */}
-        <div style={{
-          textAlign: 'center',
+        <div style={{ 
+          textAlign: 'center', 
           marginBottom: '30px'
         }}>
-          <h1 style={{
+          <h1 style={{ 
             fontSize: '2.5rem',
             color: '#1f77b4',
             margin: '0 0 10px 0',
@@ -314,7 +341,7 @@ export default function Home() {
           }}>
             ⚡ 电力市场预测与投标优化系统
           </h1>
-          <p style={{
+          <p style={{ 
             color: '#666',
             fontSize: '16px',
             margin: 0
@@ -324,13 +351,13 @@ export default function Home() {
         </div>
 
         {/* 标签页导航 */}
-        <div style={{
-          display: 'flex',
+        <div style={{ 
+          display: 'flex', 
           borderBottom: '2px solid #f0f2f6',
           marginBottom: '20px'
         }}>
           {[
-            { key: 'upload', label: '📤 数据上传', icon: '📤' },
+            { key: 'database', label: '🗄️ 数据库状态', icon: '🗄️' },
             { key: 'predict', label: '📊 预测分析', icon: '📊' },
             { key: 'optimize', label: '🎯 投标优化', icon: '🎯' }
           ].map(({ key, label }) => (
@@ -355,127 +382,114 @@ export default function Home() {
         </div>
 
         {/* 标签页内容 */}
-        <div style={{
+        <div style={{ 
           background: '#fff',
           padding: '20px',
           borderRadius: '8px',
           boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
           minHeight: '500px'
         }}>
-          {/* 数据上传标签页 */}
-          {activeTab === 'upload' && (
+          {/* 数据库状态标签页 */}
+          {activeTab === 'database' && (
             <div>
-              <h2 style={{ color: '#1f77b4', marginBottom: '20px', fontSize: '24px' }}>📤 数据上传</h2>
-
-              <div style={{
-                border: '2px dashed #cccccc',
+              <h2 style={{ color: '#1f77b4', marginBottom: '20px', fontSize: '24px' }}>🗄️ 数据库状态</h2>
+              
+              <div style={{ 
+                border: '2px solid #1f77b4',
                 borderRadius: '10px',
-                padding: '40px',
+                padding: '30px',
                 textAlign: 'center',
                 marginBottom: '20px',
-                background: '#fafafa'
+                background: '#f8fbff'
               }}>
-                <div style={{ fontSize: '48px', marginBottom: '20px' }}>📁</div>
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  onChange={handleFileUpload}
-                  disabled={uploading}
+                <div style={{ fontSize: '48px', marginBottom: '20px' }}>🗄️</div>
+                <h3 style={{ color: '#1f77b4', marginBottom: '15px' }}>电力市场历史数据库</h3>
+                <p style={{ color: '#666', fontSize: '16px', lineHeight: '1.6', marginBottom: '20px' }}>
+                  系统已内置完整的电力市场历史数据，包含15分钟频率的实时出清电价、系统负荷、新能源出力等数据
+                </p>
+                
+                <button
+                  onClick={fetchDatabaseStatus}
+                  disabled={loading}
                   style={{
-                    marginBottom: '15px',
-                    padding: '10px',
-                    border: '1px solid #ddd',
+                    background: '#1f77b4',
+                    color: 'white',
+                    border: 'none',
+                    padding: '12px 24px',
                     borderRadius: '6px',
-                    fontSize: '16px'
+                    fontSize: '16px',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    fontWeight: 'bold'
                   }}
-                />
-                <div style={{ color: '#666', fontSize: '14px', lineHeight: '1.6' }}>
-                  <p>选择电力市场数据文件</p>
-                  <p>支持Excel和CSV格式，文件应包含时间列和电价列</p>
-                </div>
+                >
+                  {loading ? '🔄 检查中...' : '🔍 检查数据库状态'}
+                </button>
               </div>
-
-              {uploading && (
-                <div style={{
-                  textAlign: 'center',
-                  color: '#1f77b4',
-                  fontSize: '16px',
-                  padding: '20px'
-                }}>
-                  <div style={{ fontSize: '24px', marginBottom: '10px' }}>⏳</div>
-                  正在上传和处理文件...
-                </div>
-              )}
-
-              {result && (
-                <div style={{
-                  background: '#f0f2f6',
-                  padding: '20px',
+              
+              {databaseStatus && (
+                <div style={{ 
+                  background: '#f0f2f6', 
+                  padding: '20px', 
                   borderRadius: '8px',
                   marginTop: '20px'
                 }}>
-                  <h3 style={{ color: '#1f77b4', margin: '0 0 15px 0' }}>✅ 文件处理完成</h3>
-
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                  <h3 style={{ color: '#1f77b4', margin: '0 0 15px 0' }}>📊 数据库信息</h3>
+                  
+                  <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
                     gap: '15px',
                     marginBottom: '20px'
                   }}>
                     <div style={{ background: 'white', padding: '15px', borderRadius: '6px', textAlign: 'center' }}>
                       <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1f77b4' }}>
-                        {result.data.rows}
+                        {databaseStatus.database.totalRecords.toLocaleString()}
                       </div>
-                      <div style={{ color: '#666' }}>数据行数</div>
+                      <div style={{ color: '#666' }}>总数据点</div>
                     </div>
                     <div style={{ background: 'white', padding: '15px', borderRadius: '6px', textAlign: 'center' }}>
                       <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1f77b4' }}>
-                        {result.data.columns}
+                        {databaseStatus.database.dataFrequency}
                       </div>
-                      <div style={{ color: '#666' }}>数据列数</div>
+                      <div style={{ color: '#666' }}>数据频率</div>
                     </div>
                     <div style={{ background: 'white', padding: '15px', borderRadius: '6px', textAlign: 'center' }}>
                       <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#1f77b4' }}>
-                        {result.data.size} KB
+                        {databaseStatus.database.recentStats.avgPrice}
                       </div>
-                      <div style={{ color: '#666' }}>文件大小</div>
+                      <div style={{ color: '#666' }}>近期平均电价 (元/MWh)</div>
                     </div>
                     <div style={{ background: 'white', padding: '15px', borderRadius: '6px', textAlign: 'center' }}>
-                      <div style={{
-                        fontSize: '24px',
-                        fontWeight: 'bold',
-                        color: result.validation.valid ? '#52c41a' : '#faad14'
-                      }}>
-                        {result.validation.valid ? '✅' : '⚠️'}
+                      <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#52c41a' }}>
+                        ✅
                       </div>
-                      <div style={{ color: '#666' }}>数据验证</div>
+                      <div style={{ color: '#666' }}>数据状态</div>
                     </div>
                   </div>
-
-                  {result.validation.timeColumns && (
-                    <div style={{ marginBottom: '10px' }}>
-                      <strong>检测到时间列:</strong> {result.validation.timeColumns.join(', ')}
+                  
+                  <div style={{ marginBottom: '15px' }}>
+                    <strong>数据时间范围:</strong> 
+                    <div style={{ marginTop: '5px', fontSize: '14px', color: '#666' }}>
+                      从 {new Date(databaseStatus.database.timeRange.start).toLocaleString('zh-CN')} 
+                      到 {new Date(databaseStatus.database.timeRange.end).toLocaleString('zh-CN')}
                     </div>
-                  )}
-                  {result.validation.priceColumns && (
-                    <div style={{ marginBottom: '10px' }}>
-                      <strong>检测到价格列:</strong> {result.validation.priceColumns.join(', ')}
+                  </div>
+                  
+                  <div style={{ marginBottom: '15px' }}>
+                    <strong>数据列:</strong> {databaseStatus.database.columns.join(', ')}
+                  </div>
+                  
+                  <div style={{ 
+                    background: '#f6ffed',
+                    border: '1px solid #b7eb8f',
+                    padding: '15px',
+                    borderRadius: '6px',
+                    marginTop: '15px'
+                  }}>
+                    <div style={{ color: '#52c41a', fontWeight: 'bold' }}>
+                      ✅ 数据库连接正常，数据完整，可以进行预测分析
                     </div>
-                  )}
-
-                  {result.validation.valid && (
-                    <div style={{
-                      background: '#f6ffed',
-                      border: '1px solid #b7eb8f',
-                      padding: '15px',
-                      borderRadius: '6px',
-                      marginTop: '15px'
-                    }}>
-                      <div style={{ color: '#52c41a', fontWeight: 'bold' }}>
-                        ✅ 数据格式验证通过，可以进行预测分析
-                      </div>
-                    </div>
-                  )}
+                  </div>
                 </div>
               )}
             </div>
@@ -485,51 +499,51 @@ export default function Home() {
           {activeTab === 'predict' && (
             <div>
               <h2 style={{ color: '#1f77b4', marginBottom: '20px', fontSize: '24px' }}>📊 预测分析</h2>
-
-              {!result && (
-                <div style={{
+              
+              {!databaseStatus && (
+                <div style={{ 
                   textAlign: 'center',
                   padding: '40px',
                   color: '#666'
                 }}>
                   <div style={{ fontSize: '48px', marginBottom: '20px' }}>⚠️</div>
-                  <p style={{ fontSize: '18px' }}>请先在'数据上传'标签页上传数据文件</p>
+                  <p style={{ fontSize: '18px' }}>请先在'数据库状态'标签页检查数据库连接</p>
                 </div>
               )}
-
-              {result && (
+              
+              {databaseStatus && (
                 <div>
                   <button
                     onClick={handlePredict}
-                    disabled={!result.validation.valid}
+                    disabled={loading || !databaseStatus.database}
                     style={{
-                      background: result.validation.valid ? '#1f77b4' : '#d9d9d9',
+                      background: (!loading && databaseStatus.database) ? '#1f77b4' : '#d9d9d9',
                       color: 'white',
                       border: 'none',
                       padding: '15px 30px',
                       borderRadius: '8px',
                       fontSize: '18px',
-                      cursor: result.validation.valid ? 'pointer' : 'not-allowed',
+                      cursor: (!loading && databaseStatus.database) ? 'pointer' : 'not-allowed',
                       marginBottom: '30px',
                       fontWeight: 'bold'
                     }}
                   >
-                    🚀 开始预测分析
+                    {loading ? '🔄 分析中...' : '🚀 开始预测分析'}
                   </button>
 
                   {predictions && (
-                    <div style={{
-                      background: '#f0f2f6',
-                      padding: '20px',
+                    <div style={{ 
+                      background: '#f0f2f6', 
+                      padding: '20px', 
                       borderRadius: '8px'
                     }}>
                       <h3 style={{ color: '#1f77b4', margin: '0 0 20px 0', fontSize: '20px' }}>📈 预测结果</h3>
-
-                      <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                        gap: '15px',
-                        marginBottom: '30px'
+                      
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                        gap: '15px', 
+                        marginBottom: '30px' 
                       }}>
                         <div style={{ background: 'white', padding: '20px', borderRadius: '8px', textAlign: 'center' }}>
                           <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#1f77b4' }}>
@@ -557,9 +571,9 @@ export default function Home() {
                           <div style={{ color: '#666', fontSize: '14px' }}>MAE 平均绝对误差</div>
                         </div>
                       </div>
-
+                      
                       <h4 style={{ marginBottom: '15px' }}>📋 详细预测数据</h4>
-                      <div style={{
+                      <div style={{ 
                         background: 'white',
                         borderRadius: '8px',
                         overflow: 'hidden',
@@ -577,18 +591,18 @@ export default function Home() {
                             </thead>
                             <tbody>
                               {predictions.predictions.slice(0, 10).map((pred, index) => (
-                                <tr key={index} style={{
+                                <tr key={index} style={{ 
                                   background: index % 2 === 0 ? '#f8f9fa' : 'white',
                                   borderBottom: '1px solid #e9ecef'
                                 }}>
                                   <td style={{ padding: '12px' }}>
                                     {new Date(pred.time).toLocaleString('zh-CN')}
                                   </td>
-                                  <td style={{
-                                    padding: '12px',
-                                    textAlign: 'center',
-                                    fontWeight: 'bold',
-                                    color: '#1f77b4'
+                                  <td style={{ 
+                                    padding: '12px', 
+                                    textAlign: 'center', 
+                                    fontWeight: 'bold', 
+                                    color: '#1f77b4' 
                                   }}>
                                     {pred.predicted_price}
                                   </td>
@@ -604,7 +618,102 @@ export default function Home() {
                           </table>
                         </div>
                       </div>
-
+                      
+                      {/* 自动分析结果 */}
+                      {predictions.analysis && (
+                        <div style={{ 
+                          background: 'white',
+                          borderRadius: '8px',
+                          padding: '20px',
+                          marginBottom: '20px',
+                          border: '1px solid #e9ecef'
+                        }}>
+                          <h4 style={{ marginBottom: '15px', color: '#1f77b4' }}>🤖 智能分析报告</h4>
+                          
+                          {/* 价格趋势 */}
+                          <div style={{ marginBottom: '15px' }}>
+                            <strong>📈 价格趋势：</strong>
+                            <span style={{ 
+                              color: predictions.analysis.price_trend.direction === '上升' ? '#52c41a' : '#fa8c16',
+                              marginLeft: '8px'
+                            }}>
+                              {predictions.analysis.price_trend.direction} 
+                              ({predictions.analysis.price_trend.change_percentage > 0 ? '+' : ''}
+                              {predictions.analysis.price_trend.change_percentage}%)
+                            </span>
+                          </div>
+                          
+                          {/* 波动性 */}
+                          <div style={{ marginBottom: '15px' }}>
+                            <strong>📊 市场波动：</strong>
+                            <span style={{ 
+                              color: predictions.analysis.volatility.level === '低' ? '#52c41a' : 
+                                     predictions.analysis.volatility.level === '中' ? '#fa8c16' : '#ff4d4f',
+                              marginLeft: '8px'
+                            }}>
+                              {predictions.analysis.volatility.level}波动 ({predictions.analysis.volatility.value}元/MWh)
+                            </span>
+                          </div>
+                          
+                          {/* 投标建议 */}
+                          {predictions.analysis.bidding_recommendations.length > 0 && (
+                            <div style={{ marginBottom: '15px' }}>
+                              <strong>💡 投标建议：</strong>
+                              <ul style={{ marginTop: '8px', paddingLeft: '20px' }}>
+                                {predictions.analysis.bidding_recommendations.map((rec, index) => (
+                                  <li key={index} style={{ marginBottom: '5px', fontSize: '14px' }}>{rec}</li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                          
+                          {/* 风险评估 */}
+                          <div style={{ marginBottom: '15px' }}>
+                            <strong>⚠️ 风险评估：</strong>
+                            <span style={{ 
+                              color: predictions.analysis.risk_assessment.level === '低' ? '#52c41a' : 
+                                     predictions.analysis.risk_assessment.level === '中' ? '#fa8c16' : '#ff4d4f',
+                              marginLeft: '8px'
+                            }}>
+                              {predictions.analysis.risk_assessment.level}风险 
+                              (置信度: {Math.round(predictions.analysis.risk_assessment.confidence_score * 100)}%)
+                            </span>
+                          </div>
+                          
+                          {/* 模型质量 */}
+                          <div>
+                            <strong>🎯 模型质量：</strong>
+                            <span style={{ marginLeft: '8px' }}>
+                              综合评分 {predictions.analysis.model_quality.overall_score}/100
+                              (MAE: {predictions.analysis.model_quality.mae_performance}, 
+                               R²: {predictions.analysis.model_quality.r2_performance})
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* 超参数优化结果 */}
+                      {predictions.optimization_results && (
+                        <div style={{ 
+                          background: 'white',
+                          borderRadius: '8px',
+                          padding: '20px',
+                          marginBottom: '20px',
+                          border: '1px solid #e9ecef'
+                        }}>
+                          <h4 style={{ marginBottom: '15px', color: '#1f77b4' }}>🔧 自动优化结果</h4>
+                          {Object.entries(predictions.optimization_results).map(([modelName, result]) => (
+                            <div key={modelName} style={{ marginBottom: '10px' }}>
+                              <strong>{modelName}:</strong>
+                              <span style={{ marginLeft: '8px', fontSize: '14px' }}>
+                                最佳评分 {Math.round(result.best_score * 1000) / 1000}
+                                (优化迭代: {result.optimization_history.length}次)
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      
                       <button
                         onClick={() => downloadCSV(predictions.predictions, '电价预测结果.csv')}
                         style={{
@@ -631,9 +740,9 @@ export default function Home() {
           {activeTab === 'optimize' && (
             <div>
               <h2 style={{ color: '#1f77b4', marginBottom: '20px', fontSize: '24px' }}>🎯 投标优化</h2>
-
+              
               {!predictions && (
-                <div style={{
+                <div style={{ 
                   textAlign: 'center',
                   padding: '40px',
                   color: '#666'
@@ -642,7 +751,7 @@ export default function Home() {
                   <p style={{ fontSize: '18px' }}>请先完成预测分析</p>
                 </div>
               )}
-
+              
               {predictions && (
                 <div>
                   <button
@@ -664,18 +773,18 @@ export default function Home() {
                   </button>
 
                   {optimization && (
-                    <div style={{
-                      background: '#f0f2f6',
-                      padding: '20px',
+                    <div style={{ 
+                      background: '#f0f2f6', 
+                      padding: '20px', 
                       borderRadius: '8px'
                     }}>
                       <h3 style={{ color: '#52c41a', margin: '0 0 20px 0', fontSize: '20px' }}>🏆 最优投标策略</h3>
-
-                      <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                        gap: '15px',
-                        marginBottom: '30px'
+                      
+                      <div style={{ 
+                        display: 'grid', 
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', 
+                        gap: '15px', 
+                        marginBottom: '30px' 
                       }}>
                         <div style={{ background: 'white', padding: '20px', borderRadius: '8px', textAlign: 'center' }}>
                           <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#52c41a' }}>
@@ -699,10 +808,10 @@ export default function Home() {
                           <div style={{ color: '#999', fontSize: '12px' }}>元</div>
                         </div>
                       </div>
-
-                      <div style={{
-                        background: 'white',
-                        padding: '20px',
+                      
+                      <div style={{ 
+                        background: 'white', 
+                        padding: '20px', 
                         borderRadius: '8px',
                         marginBottom: '20px'
                       }}>
