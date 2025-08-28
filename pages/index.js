@@ -14,11 +14,21 @@ export default function PowerMarketDashboard() {
   
   // 配置状态
   const [predictionConfig, setPredictionConfig] = useState({
-    prediction_date: '2024-05-02',
+    prediction_date: '2025-07-01', // 默认预测2025年7月1日（基于2025年5-6月真实数据）
     prediction_hours: 96,
     models: ['random_forest', 'xgboost', 'gradient_boosting', 'linear_regression'],
     confidence_level: 0.95
   });
+
+  // 数据范围状态
+  const [dataRange, setDataRange] = useState({
+    start: '2025-05-01',
+    end: '2025-06-30',
+    lastRealDataDate: '2025-06-30' // 最后一个真实数据的日期 - 2025年数据
+  });
+
+  // 添加错误状态
+  const [error, setError] = useState(null);
   
   const [historicalConfig, setHistoricalConfig] = useState({
     timeRange: '1d',
@@ -35,48 +45,121 @@ export default function PowerMarketDashboard() {
 
   // API调用函数
   const fetchDatabaseStatus = async () => {
+    console.log('🔍 开始获取数据库状态...');
     setLoading(true);
+    setError(null);
+
     try {
+      console.log('📡 API地址:', `${API_BASE_URL}/api/database/status`);
       const response = await fetch(`${API_BASE_URL}/api/database/status`);
+
+      console.log('📊 响应状态:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
+      console.log('✅ 获取到数据:', data);
       setDatabaseStatus(data);
+
+      // 更新数据范围
+      if (data.database?.timeRange) {
+        const startDate = new Date(data.database.timeRange.start);
+        const endDate = new Date(data.database.timeRange.end);
+
+        console.log('📅 数据时间范围:', {
+          start: startDate.toISOString(),
+          end: endDate.toISOString()
+        });
+
+        setDataRange({
+          start: startDate.toISOString().split('T')[0],
+          end: endDate.toISOString().split('T')[0],
+          lastRealDataDate: endDate.toISOString().split('T')[0]
+        });
+
+        // 自动设置预测日期为2025年7月1日（基于2025年5-6月真实数据预测7月）
+        const nextMonth = new Date(endDate);
+        nextMonth.setMonth(6); // 7月 (0-based)
+        nextMonth.setDate(1);  // 1日
+        const nextMonthStr = nextMonth.toISOString().split('T')[0];
+
+        console.log('🔮 设置预测日期:', nextMonthStr);
+
+        setPredictionConfig(prev => ({
+          ...prev,
+          prediction_date: nextMonthStr
+        }));
+      }
     } catch (error) {
-      console.error('获取数据库状态失败:', error);
+      console.error('❌ 获取数据库状态失败:', error);
+      setError(`获取数据库状态失败: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
   const fetchHistoricalData = async () => {
+    console.log('📈 开始获取历史数据...');
     setLoading(true);
+    setError(null);
+
     try {
       const params = new URLSearchParams({
         timeRange: historicalConfig.timeRange,
         includePredictions: historicalConfig.includePredictions.toString()
       });
-      
-      const response = await fetch(`${API_BASE_URL}/api/historical-prices?${params}`);
+
+      const url = `${API_BASE_URL}/api/historical-prices?${params}`;
+      console.log('📡 API地址:', url);
+
+      const response = await fetch(url);
+      console.log('📊 响应状态:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
+      console.log('✅ 获取到历史数据:', data);
       setHistoricalData(data);
     } catch (error) {
-      console.error('获取历史数据失败:', error);
+      console.error('❌ 获取历史数据失败:', error);
+      setError(`获取历史数据失败: ${error.message}`);
     } finally {
       setLoading(false);
     }
   };
 
   const runPrediction = async () => {
+    console.log('🚀 开始预测分析...');
+    console.log('🔧 预测配置:', predictionConfig);
     setLoading(true);
+    setError(null);
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/predict`, {
+      const url = `${API_BASE_URL}/api/predict`;
+      console.log('📡 API地址:', url);
+
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ config: predictionConfig })
       });
+
+      console.log('📊 响应状态:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
+      console.log('✅ 预测完成:', data);
       setPredictionResults(data);
     } catch (error) {
-      console.error('预测分析失败:', error);
+      console.error('❌ 预测分析失败:', error);
+      setError(`预测分析失败: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -84,13 +167,21 @@ export default function PowerMarketDashboard() {
 
   const runOptimization = async () => {
     if (!predictionResults?.predictions) {
-      alert('请先运行预测分析');
+      console.log('⚠️ 没有预测数据，无法进行优化');
+      setError('请先运行预测分析');
       return;
     }
-    
+
+    console.log('🎯 开始投标优化...');
+    console.log('🔧 优化配置:', optimizationConfig);
     setLoading(true);
+    setError(null);
+
     try {
-      const response = await fetch(`${API_BASE_URL}/api/optimize`, {
+      const url = `${API_BASE_URL}/api/optimize`;
+      console.log('📡 API地址:', url);
+
+      const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -98,10 +189,19 @@ export default function PowerMarketDashboard() {
           config: optimizationConfig
         })
       });
+
+      console.log('📊 响应状态:', response.status);
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
       const data = await response.json();
+      console.log('✅ 优化完成:', data);
       setOptimizationResults(data);
     } catch (error) {
-      console.error('投标优化失败:', error);
+      console.error('❌ 投标优化失败:', error);
+      setError(`投标优化失败: ${error.message}`);
     } finally {
       setLoading(false);
     }
@@ -167,13 +267,20 @@ export default function PowerMarketDashboard() {
               type="date"
               value={predictionConfig.prediction_date}
               onChange={(e) => setPredictionConfig({...predictionConfig, prediction_date: e.target.value})}
-              min="2024-05-01"
-              max="2024-06-30"
-              style={{ width: '100%', padding: '5px', marginBottom: '10px', fontSize: '12px' }}
+              min="2025-01-01"
+              max="2025-12-31"
+              style={{ width: '100%', padding: '5px', marginBottom: '5px', fontSize: '12px' }}
             />
-            <p style={{ fontSize: '10px', color: '#bdc3c7', margin: '0 0 10px 0' }}>
-              推荐: 2024-05-02 (有验证数据)
-            </p>
+            <div style={{ fontSize: '10px', color: '#bdc3c7', margin: '0 0 10px 0' }}>
+              <div>📊 真实数据: 2025年5-6月 (5856个真实数据点)</div>
+              <div>🔮 预测目标: 基于2025年5-6月数据预测其他时期</div>
+              {predictionConfig.prediction_date >= '2025-05-01' && predictionConfig.prediction_date <= '2025-06-30' ? (
+                <div style={{ color: '#e74c3c' }}>⚠️ 选择日期有真实数据，可用于验证准确性</div>
+              ) : (
+                <div style={{ color: '#27ae60' }}>✅ 预测模式，基于2025年5-6月真实数据预测</div>
+              )}
+              <div style={{ color: '#3498db' }}>💡 推荐: 2025-07-01 (预测7月电价)</div>
+            </div>
             
             <label style={{ display: 'block', fontSize: '12px', marginBottom: '5px' }}>预测数据点:</label>
             <select 
@@ -376,16 +483,46 @@ export default function PowerMarketDashboard() {
             )}
           </div>
 
+          {/* 错误显示 */}
+          {error && (
+            <div style={{
+              padding: '15px',
+              backgroundColor: '#f8d7da',
+              color: '#721c24',
+              border: '1px solid #f5c6cb',
+              borderRadius: '8px',
+              marginBottom: '20px'
+            }}>
+              <strong>❌ 错误:</strong> {error}
+              <button
+                onClick={() => setError(null)}
+                style={{
+                  float: 'right',
+                  background: 'none',
+                  border: 'none',
+                  color: '#721c24',
+                  cursor: 'pointer',
+                  fontSize: '16px'
+                }}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* 加载指示器 */}
           {loading && (
-            <div style={{ 
-              textAlign: 'center', 
+            <div style={{
+              textAlign: 'center',
               padding: '40px',
               backgroundColor: 'white',
               borderRadius: '8px',
               boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
             }}>
               <div style={{ fontSize: '18px', color: '#3498db' }}>⏳ 处理中...</div>
+              <div style={{ fontSize: '14px', color: '#7f8c8d', marginTop: '10px' }}>
+                请查看浏览器控制台获取详细信息
+              </div>
             </div>
           )}
 
@@ -530,6 +667,7 @@ export default function PowerMarketDashboard() {
                       <thead>
                         <tr style={{ backgroundColor: '#f8f9fa' }}>
                           <th style={{ padding: '8px', border: '1px solid #dee2e6', textAlign: 'left' }}>时间</th>
+                          <th style={{ padding: '8px', border: '1px solid #dee2e6', textAlign: 'left' }}>数据类型</th>
                           <th style={{ padding: '8px', border: '1px solid #dee2e6', textAlign: 'right' }}>实时电价</th>
                           <th style={{ padding: '8px', border: '1px solid #dee2e6', textAlign: 'right' }}>日前电价</th>
                           <th style={{ padding: '8px', border: '1px solid #dee2e6', textAlign: 'right' }}>系统负荷</th>
@@ -540,28 +678,70 @@ export default function PowerMarketDashboard() {
                         </tr>
                       </thead>
                       <tbody>
-                        {historicalData.data?.slice(0, 100).map((item, index) => (
-                          <tr key={index}>
-                            <td style={{ padding: '6px', border: '1px solid #dee2e6' }}>
-                              {new Date(item.time).toLocaleString('zh-CN')}
-                            </td>
-                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
-                              {item.realtime_price}
-                            </td>
-                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
-                              {item.dayahead_price}
-                            </td>
-                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
-                              {item.system_load}
-                            </td>
-                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
-                              {item.renewable_output}
-                            </td>
-                            {historicalData.predictions && historicalData.predictions[index] && (
-                              <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right', backgroundColor: '#f0f8ff' }}>
-                                {historicalData.predictions[index].predicted_price}
+                        {/* 显示真实历史数据 */}
+                        {historicalData.data?.slice(0, 100).map((item, index) => {
+                          const itemDate = new Date(item.time);
+                          const itemMonth = itemDate.getMonth() + 1; // 1-12
+                          // 2025年5-6月为真实数据，其他为预测数据
+                          const isRealData = (itemMonth >= 5 && itemMonth <= 6);
+
+                          return (
+                            <tr key={index} style={{ backgroundColor: isRealData ? 'white' : '#fff9e6' }}>
+                              <td style={{ padding: '6px', border: '1px solid #dee2e6' }}>
+                                {itemDate.toLocaleString('zh-CN')}
                               </td>
-                            )}
+                              <td style={{ padding: '6px', border: '1px solid #dee2e6', fontSize: '10px' }}>
+                                {isRealData ? (
+                                  <span style={{ color: '#27ae60', fontWeight: 'bold' }}>📊 真实数据</span>
+                                ) : (
+                                  <span style={{ color: '#f39c12', fontWeight: 'bold' }}>🔮 预测数据</span>
+                                )}
+                              </td>
+                              <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
+                                {item.realtime_price}
+                              </td>
+                              <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
+                                {item.dayahead_price}
+                              </td>
+                              <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
+                                {item.system_load}
+                              </td>
+                              <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right' }}>
+                                {item.renewable_output}
+                              </td>
+                              {historicalData.predictions && historicalData.predictions[index] && (
+                                <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right', backgroundColor: '#f0f8ff' }}>
+                                  {historicalData.predictions[index].predicted_price}
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        })}
+
+                        {/* 如果有预测数据，单独显示 */}
+                        {historicalData.predictions && historicalData.predictions.map((pred, index) => (
+                          <tr key={`pred-${index}`} style={{ backgroundColor: '#f0f8ff' }}>
+                            <td style={{ padding: '6px', border: '1px solid #dee2e6' }}>
+                              {new Date(pred.time).toLocaleString('zh-CN')}
+                            </td>
+                            <td style={{ padding: '6px', border: '1px solid #dee2e6', fontSize: '10px' }}>
+                              <span style={{ color: '#3498db', fontWeight: 'bold' }}>🔮 预测结果</span>
+                            </td>
+                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right', color: '#3498db' }}>
+                              {pred.predicted_price}
+                            </td>
+                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right', color: '#999' }}>
+                              -
+                            </td>
+                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right', color: '#999' }}>
+                              -
+                            </td>
+                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right', color: '#999' }}>
+                              -
+                            </td>
+                            <td style={{ padding: '6px', border: '1px solid #dee2e6', textAlign: 'right', backgroundColor: '#e8f4fd' }}>
+                              {pred.predicted_price}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
